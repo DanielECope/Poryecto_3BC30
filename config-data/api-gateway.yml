@@ -1,0 +1,36 @@
+server:
+  port: 7070
+
+# Para conectar con el Eureka Server (Sevice Discovery)
+eureka:
+  client:
+    serviceUrl:
+      defaultZone: http://localhost:7076/eureka
+  instance:
+    hostname: localhost
+    instance-id: ${spring.application.name}:${random.uuid}
+
+spring:
+  cloud:
+    gateway:
+      discovery:
+        locator:
+          enabled: true
+      routes:            
+        - id: microservicio-product
+          # lb(Load Banlacing) - MICROSERVICIO-PRODUCT(Nombre de la aplicación - se registró en EUREKA)
+          uri: lb://microservicio-product
+          predicates:
+            - Path=/api/1.0.0/products/**, /api/1.0.0/producttypes/**
+        - id: microservicio-customer
+          uri: lb://microservicio-customer
+          predicates:
+            - Path=/api/1.0.0/customers/**, /api/1.0.0/customertypes/**
+        - id: microservicio-contract
+          uri: lb://microservicio-contract
+          predicates:
+            - Path=/api/1.0.0/contracts/**
+        - id: microservicio-operation
+          uri: lb://microservicio-operation
+          predicates:
+            - Path=/api/1.0.0/operations/**
