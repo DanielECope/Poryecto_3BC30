@@ -14,6 +14,7 @@ import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import javax.validation.Valid;
+import java.time.LocalDate;
 import java.util.List;
 
 @RestController
@@ -26,20 +27,25 @@ public class CustomerProductController {
 	
 	@GetMapping
 	@ResponseStatus(code = HttpStatus.OK)
-	public Flux<CustomerProduct> findAll(){
+	public Flux<CustomerProduct> findAll() throws Exception {
 		logger.info("Inicio ::: findAll");
 		return service.findAll()
 				.doOnNext(x -> logger.info("Fin ::: findAll"));
 	}
 	
-	@GetMapping("/{id}")
+	@GetMapping("/fintById/{id}")
 	@ResponseStatus(code = HttpStatus.OK)
-	public Mono<CustomerProduct> fintById(@PathVariable("id") String id){
+	public Mono<CustomerProduct> fintById(@PathVariable("id") String id) throws Exception {
+		logger.info("fintById: "+id);
 		return service.findById(id);
 	}
-
+	@GetMapping("/fintByDocument/{document}")
+	@ResponseStatus(code = HttpStatus.OK)
+	public List<CustomerProduct> fintByDocument(@PathVariable("document") String document)throws Exception{
+		return service.findByCustomersIdentificationDocument(document);
+	}
 	@GetMapping("/findByCAndP")
-	public List<CustomerProduct> findByCustomersIdAndProductId(String customersId, String productId) {
+	public List<CustomerProduct> findByCustomersIdAndProductId(String customersId, String productId)throws Exception {
 		logger.info("cliente: "+customersId);
 		logger.info("producto:"+productId);
 		return service.findByCustomersIdAndProductId(customersId,productId);
@@ -47,20 +53,28 @@ public class CustomerProductController {
 	
 	@PostMapping
 	@ResponseStatus(code = HttpStatus.CREATED)
-	public CustomerProduct insert(@Valid @RequestBody CustomerProduct obj){
+	public CustomerProduct insert(@Valid @RequestBody CustomerProduct obj)throws Exception{
 		return service.insert(obj);
 	}
 	
 	@PutMapping("/update")
 	@ResponseStatus(code = HttpStatus.CREATED)
-	public Mono<CustomerProduct> update(@Valid @RequestBody CustomerProduct obj){
+	public Mono<CustomerProduct> update(@Valid @RequestBody CustomerProduct obj)throws Exception{
 		return service.update(obj);
 	}
 	
 	@DeleteMapping("/{id}")
 	@ResponseStatus(code = HttpStatus.NO_CONTENT)
-	public Mono<Void> delete(@PathVariable("id") String id) {
+	public Mono<Void> delete(@PathVariable("id") String id)throws Exception {
 		return service.delete(id);
+	}
+
+
+	@GetMapping("/findByProductIdAndRegisterDateBetween")
+	public List<CustomerProduct> findByProductIdAndRegisterDateBetween(@RequestHeader(name="productId")  String productId,
+																	   @RequestHeader(name="from")  LocalDate from,
+																	   @RequestHeader(name="to")  LocalDate to) throws Exception {
+		return service.findByProductIdAndRegisterDateBetween(productId,from,to);
 	}
 
 }

@@ -17,11 +17,13 @@ import pe.com.nttdata.Operation.model.Product;
 import pe.com.nttdata.Operation.repository.IOperationRepository;
 import pe.com.nttdata.Operation.repository.IOperationRepositoryMongo;
 import pe.com.nttdata.Operation.service.IOperationService;
+import picocli.CommandLine;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 
 @Service
@@ -51,10 +53,11 @@ public class OperationServiceImpl implements IOperationService {
 				.retrieve()
 				.bodyToMono(CustomerProduct.class);
 	}
+	@Override
 	public CustomerProduct findByIdContract2(String id) {
 		logger.info("Class: OperationServiceImpl -> Method: findByCustomersIdAndProductId2 ");
-		logger.info("http://localhost:7073/api/1.0.0/contracts/"+id);
-		CustomerProduct obj= restTemplate.getForObject("http://localhost:7073/api/1.0.0/contracts/"+id,CustomerProduct.class);
+		logger.info("http://localhost:7073/api/1.0.0/contracts/fintById/"+id);
+		CustomerProduct obj= restTemplate.getForObject("http://localhost:7073/api/1.0.0/contracts/fintById/"+id,CustomerProduct.class);
 		logger.info(obj.toString());
 		return obj;
 	}
@@ -63,8 +66,8 @@ public class OperationServiceImpl implements IOperationService {
 		return restTemplate.getForObject("http://localhost:7072/api/1.0.0/products/"+id,Product.class);
 	}
 	public Customer findByIdCustomer2(String id){
-		logger.info("Class: CustomerProductServiceImpl -> Method: findByIdCustomer "+"http://localhost:7071/api/1.0.0/customers/"+id);
-		return restTemplate.getForObject("http://localhost:7071/api/1.0.0/customers/"+id,Customer.class);
+		logger.info("Class: CustomerProductServiceImpl -> Method: findByIdCustomer2 "+"http://localhost:7071/api/1.0.0/customers/"+id);
+		return restTemplate.getForObject("http://localhost:7071/api/1.0.0/customers/fintById/"+id,Customer.class);
 	}
 
 	public CustomerProduct updateContract2(CustomerProduct obj){
@@ -110,74 +113,88 @@ public class OperationServiceImpl implements IOperationService {
 
 	@Override
 	public Operation insert(Operation obj) {
-		logger.info("Class: OperationServiceImpl -> Method: insert ");
+		logger.info("Class: OperationServiceImpl -> Method: insert -> Params "+obj.toString());
 		obj.setOperationType( obj.getOperationType().toUpperCase() );
-		CustomerProduct contract;
+		CustomerProduct	destinationAccount;
+		CustomerProduct	originAccount;
+		BigDecimal commision= BigDecimal.valueOf(0);
 		try{
-			logger.info(findByIdContract(obj.getDestinationAccount()).toString());
-			contract=findByIdContract2(obj.getDestinationAccount());
-			Customer operationCustomer=this.findByIdCustomer2(obj.getOperationCustomerId());
-			if (operationCustomer.getId().isEmpty()){
-				logger.info("CLIENTE TIENE NO REGISTRADO ::: "+obj.getOperationCustomerId());
+			logger.info("CUENTA DESTINO ::: "+findByIdContract(obj.getDestinationAccount()).toString());
+			originAccount=findByIdContract2(obj.getOriginAccount());
+			if (originAccount.getId()==null && !obj.getOperationType().equals("R")){
+				logger.info("CUENTA ORIGEN NO EXISTE ::: "+obj.getOriginAccount());
 				//throw new RuntimeException("CLIENTE TIENE NO REGISTRADO ::: "+obj.getOperationCustomerId());
 				return  null;
 			}
 
+			destinationAccount=findByIdContract2(obj.getDestinationAccount());
+			if (destinationAccount.getId()==null && !obj.getOperationType().equals("R")){
+				logger.info("CUENTA DESTINO NO EXISTE ::: "+obj.getDestinationAccount());
+				//throw new RuntimeException("CLIENTE TIENE NO REGISTRADO ::: "+obj.getOperationCustomerId());
+				return  null;
+			}
 
-		if(obj.getOperationType().equals("D"))//deposito
-			contract.setAmountAvailable(contract.getAmountAvailable().add(obj.getAmount()));
-		else if(obj.getOperationType().equals("R"))//retiro
-			contract.setAmountAvailable(contract.getAmountAvailable().subtract(obj.getAmount()));
-		else if(obj.getOperationType().equals("P") && obj.getCustomerProduct().getProduct().getName().equals("CREDIT"))//pago
-			contract.setCreditLine(contract.getAmountAvailable().subtract(obj.getAmount()));
+			if (originAccount.getNumberOfMoves()>= originAccount.getMaxNumberTransactionsNoCommissions()) {
+				commision= BigDecimal.valueOf(originAccount.getProduct().getCommission());
+			}
+
+			if (obj.getCustomerId()==null){
+				logger.info("CLIENTE TIENE NO REGISTRADO ::: "+obj.getOperationCustomerId());
+				//throw new RuntimeException("CLIENTE TIENE NO REGISTRADO ::: "+obj.getOperationCustomerId());
+				//return  null;
+			}
+			obj.setCustomerId(obj.getCustomerId());
 
 
-		BigDecimal commisionConvert = BigDecimal.valueOf(contract.getProduct().getCommission());
-		if ( contract.getNumberOfMoves() >=contract.getMaxNumberTransactionsNoCommissions())
-			contract.setAmountAvailable( contract.getAmountAvailable().add(commisionConvert) );
 
-		contract.setNumberOfMoves(contract.getNumberOfMoves()+1);
-		contract.setId(obj.getOriginAccount());//cambio de cuenta
-		CustomerProduct contract2=this.updateContract2(contract);
-		obj=repo2.save(obj);
+			if(obj.getOperationType().equals("D"))//deposito
+			{
+				logger.info("ADD ::: "+obj.getAmount().toString());
+				destinationAccount.setAmountAvailable(destinationAccount.getAmountAvailable().add(obj.getAmount()).add(commision));
+			}
+			else if(obj.getOperationType().equals("R"))//retiro
+			{
+				logger.info("SUBTRACT ::: "+obj.getAmount().toString());
+				destinationAccount.setAmountAvailable(destinationAccount.getAmountAvailable().subtract(obj.getAmount()).subtract(commision));
+			}
+			else if(obj.getOperationType().equals("P") && obj.getCustomerProduct().getProduct().getName().equals("CREDIT"))//pago
+				destinationAccount.setCreditLine(destinationAccount.getAmountAvailable().subtract(obj.getAmount()).subtract(commision));
+			else if (obj.getOperationType().equals("T")) {
+				if (originAccount.getAmountAvailable().compareTo(obj.getAmount()) < 0){
+					logger.info("SALDO INSUFICIENTE EN SU CUENTA ::: SU MONTO DISPONIBLE ES:"+originAccount.getAmountAvailable());
+					throw new RuntimeException("SALDO INSUFICIENTE EN SU CUENTA ::: SU MONTO DISPONIBLE ES:"+originAccount.getAmountAvailable());
+					//return  null;
+				}
+				originAccount.setAmountAvailable(originAccount.getAmountAvailable().subtract(obj.getAmount()).subtract(commision));
+				obj.setCustomerId(originAccount.getCustomerId());
+
+			}
+
+
+			BigDecimal commisionConvert = BigDecimal.valueOf(destinationAccount.getProduct().getCommission());
+			if ( destinationAccount.getNumberOfMoves() >=destinationAccount.getMaxNumberTransactionsNoCommissions())
+				destinationAccount.setAmountAvailable( destinationAccount.getAmountAvailable().add(commisionConvert) );
+
+			destinationAccount.setNumberOfMoves(destinationAccount.getNumberOfMoves()+1);
+			destinationAccount.setId(obj.getOriginAccount());//cambio de cuenta
+			logger.info("CUENTA DESTINO DATOS ::: "+destinationAccount.toString());
+			logger.info("CUENTA ORIGEN DATOS ::: "+originAccount.toString());
+			CustomerProduct contract2=this.updateContract2(destinationAccount);
+			//destinationAccount=this.updateContract2(destinationAccount);
+			if (!obj.getOperationType().equals("R") && !(obj.getDestinationAccount().equals(obj.getOriginAccount()))){
+				logger.info("SE ACTUALIZA LA CUENTA ORIGEN ::: "+originAccount.getId());
+				originAccount=this.updateContract2(originAccount);
+			}
+			logger.info("guardando....!!!");
+			obj.setCustomerProductId(obj.getDestinationAccount());
+			obj.setRegisterDate(LocalDateTime.now());
+			obj.setOperationCustomerId(destinationAccount.getId());
+			obj.setCustomerId(originAccount.getCustomerId());
+			obj=repo2.save(obj);
 		}catch (Exception e){
 			logger.info(e.getMessage());
 		}
 		return obj;
-		/*
-				.flatMap(updateContract -> {
-					return repo.save(obj)
-							.map(operation -> {
-								//logger.info("contrato: "+contract.toString());
-								operation.setCustomerProduct(contract);
-								return operation;
-							});
-				});
-		return this.findByIdContract(obj.getCustomerProductId())
-				.switchIfEmpty(Mono.error(() -> new BadRequestException("El campo customerProductId tiene un valor no válido.")))
-				.flatMap(contract -> {
-					if(obj.getOperationType().equals("D"))
-						contract.setAmountAvailable(contract.getAmountAvailable().add(obj.getAmount()));
-					else if(obj.getOperationType().equals("R"))
-						contract.setAmountAvailable(contract.getAmountAvailable().subtract(obj.getAmount()));
-
-					if (contract.getNumberOfMoves()>=contract.getMaxNumberTransactionsNoCommissions())
-						contract.setAmountAvailable( contract.getAmountAvailable().add(contract.getProduct().getCommission()) );
-
-					contract.setNumberOfMoves(contract.getNumberOfMoves()+1);
-					return this.updateContract(contract)
-							.flatMap(updateContract -> {
-								return repo.save(obj)
-										.map(operation -> {
-											logger.info("contrato: "+contract.toString());
-											operation.setCustomerProduct(contract);
-											return operation;
-										});
-							});
-				})
-				.doOnNext(o -> logger.info("SE INSERTÓ EL MOVIMIENTO ::: " + o.getId()));
-
-		 */
 	}
 
 	@Override

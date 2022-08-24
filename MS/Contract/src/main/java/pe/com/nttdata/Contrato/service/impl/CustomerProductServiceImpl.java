@@ -1,6 +1,7 @@
 package pe.com.nttdata.Contrato.service.impl;
 
 
+import io.github.resilience4j.circuitbreaker.annotation.CircuitBreaker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,11 +53,17 @@ public class CustomerProductServiceImpl implements ICustomerProductService {
 				.retrieve()
 				.bodyToMono(Customer.class);
 	}
+	@CircuitBreaker(name="contrato", fallbackMethod = "fallBackfindByIdCustomer2")
 	public Customer findByIdCustomer2(String id){
-		logger.info("Class: CustomerProductServiceImpl -> Method: findByIdCustomer "+"http://localhost:7071/api/1.0.0/customers/"+id);
+		logger.info("Class: CustomerProductServiceImpl -> Method: findByIdCustomer2 "+"http://localhost:7071/api/1.0.0/customers/"+id);
 		Customer response = restTemplate.getForObject("http://localhost:7071/api/1.0.0/customers/"+id,Customer.class);
 		return  response;
 	}
+
+	public Mono<String> fallBackfindByIdCustomer2(String id, RuntimeException runtimeException){
+		return Mono.just("Microservicio customer no esta respondiendo");
+	}
+
 	public Flux<Customer> countCustomer(String document){
 		logger.info("Class: CustomerProductServiceImpl -> Method: findByIdCustomer ");
 		return webClientCustomer.get().uri("/accountByDocument/{document}",document)
@@ -64,7 +71,7 @@ public class CustomerProductServiceImpl implements ICustomerProductService {
 				.retrieve()
 				.bodyToFlux(Customer.class);
 	}
-
+	@CircuitBreaker(name="contrato", fallbackMethod = "fallBackfindByIdProduct")
 	public Mono<Product> findByIdProduct(String id){
 		logger.info("Class: CustomerProductServiceImpl -> Method: findByIdProduct ");
 		return webClientProducts.get().uri("/{id}",id)
@@ -72,10 +79,18 @@ public class CustomerProductServiceImpl implements ICustomerProductService {
 				.retrieve()
 				.bodyToMono(Product.class);
 	}
+	public Mono<String> fallBackfindByIdProduct(String id, RuntimeException runtimeException){
+		return Mono.just("Microservicio Producto no esta respondiendo");
+	}
+
+	@CircuitBreaker(name="contrato", fallbackMethod = "fallBackFindByIdProduct2")
 	public Product findByIdProduct2(String id){
-		logger.info("Class: CustomerProductServiceImpl -> Method: findByIdProduct ");
+		logger.info("Class: CustomerProductServiceImpl -> Method: findByIdProduct2");
 		Product productResponse = restTemplate.getForObject("http://localhost:7072/api/1.0.0/products/"+id,Product.class);
 		return  productResponse;
+	}
+	public String fallBackFindByIdProduct2(String id, RuntimeException runtimeException){
+		return "Microservicio Producto no esta respondiendo";
 	}
 	@Override
 	public List<CustomerProduct> findByCustomerId(String customerId){
@@ -107,9 +122,21 @@ public class CustomerProductServiceImpl implements ICustomerProductService {
 		contract.setPaymentDate(contractMono.block().getPaymentDate());
 		contract.setAssociateDebitCard(accountDebitCard);
 		contract=repo2.save(contract);
-
 		return  contract;
 	}
+
+	@Override
+	public List<CustomerProduct> findByCustomersIdentificationDocument(String identificationDocument) {
+		logger.info("Class: CustomerProductServiceImpl -> Method: findByCustomersIdentificationDocument -> parameters:" + identificationDocument);
+		return repo2.findByCustomersIdentificationDocument(identificationDocument);
+	}
+
+	@Override
+	public List<CustomerProduct> findByProductIdAndRegisterDateBetween(String productId, LocalDate from, LocalDate to) {
+		logger.info("Class: CustomerProductServiceImpl -> Method: findByProductIdAndRegisterDateBetween -> parameters:" + productId);
+		return repo2.findByProductIdAndRegisterDateBetween(productId,from,to);
+	}
+
 	@Override
 	public CustomerProduct insert(CustomerProduct obj) {
 		logger.info("Class: CustomerProductServiceImpl -> Method: insert -> parameters:" + obj.toString());
@@ -121,32 +148,32 @@ public class CustomerProductServiceImpl implements ICustomerProductService {
 			logger.info(product.toString());
 			List<CustomerProduct> contract = this.findByCustomerId(obj.getCustomerId())
 					.stream()
-					.filter(c->c.getProduct().getId().equals(product.getId())).toList();
+					.filter(c -> c.getProduct().getId().equals(product.getId())).toList();
 			logger.info("Buscar cliente " + contract.toString());
 			CustomerProduct finalObj = obj;
-			List<CustomerProduct> existCredit= contract.stream().filter(c->c.getProduct().getProductType().getName().equals("CREDIT") && LocalDate.now().isAfter(c.getPaymentDate()) && c.getProductId().equals(finalObj.getProductId())).toList();
-			if (existCredit.stream().count()>0){
-				logger.info("CLIENTE TIENE UNA DEUDA DE ::: "+contract.get(0).getAmountAvailable());
-				//throw new RuntimeException("CLIENTE TIENE UNA DEUDA DE ::: "+contract.get(0).getAmountAvailable());
-				return  null;
+			List<CustomerProduct> existCredit = contract.stream().filter(c -> c.getProduct().getProductType().getName().equals("CREDIT") && LocalDate.now().isAfter(c.getPaymentDate()) && c.getProductId().equals(finalObj.getProductId())).toList();
+			if (existCredit.stream().count() > 0) {
+				logger.info("CLIENTE TIENE UNA DEUDA DE ::: " + contract.get(0).getAmountAvailable());
+				throw new RuntimeException("CLIENTE TIENE UNA DEUDA DE ::: " + contract.get(0).getAmountAvailable());
+				//return  null;
 			}
 
 
-			if (contract.stream().count()>=1 && client.getCustomerType().getName().equals("PERSONAL") && ( product.getProductType().getName().equals("Bank account") || product.getProductType().getName().equals("CREDIT") )){
-				logger.info("CLIENTE YA POSEE UNA CUENTA DEL TIPO "+product.getName().toUpperCase()+" ::: POR SER " + client.getCustomerType().getName());
-				//throw new RuntimeException("cliente ya posee una cuenta"); CREDIT
-				return  null;
-			}else if (contract.stream().count()>=1 && client.getCustomerType().getName().equals("EMPRESARIAL") && product.getProductType().getName().equals("Bank account") && !( product.getName().equals("Cuenta corriente") ) ){
-				logger.info("CLIENTE YA POSEE NO PUEDO TENER CUENTA DEL TIPO "+product.getName().toUpperCase()+" ::: POR SER " + client.getCustomerType().getName());
-				//throw new RuntimeException("CLIENTE YA POSEE NO PUEDO TENER CUENTA DEL TIPO "+product.getName().toUpperCase()+" ::: POR SER " + client.getCustomerType().getName());
-				return  null;
-			}else if(product.getProductType().getName().equals("PERSONAL VIP") || product.getProductType().getName().equals("EMPRESARIAL PYME") ){
+			if (contract.stream().count() >= 1 && client.getCustomerType().getName().equals("PERSONAL") && (product.getProductType().getName().equals("Bank account") || product.getProductType().getName().equals("CREDIT"))) {
+				logger.info("CLIENTE YA POSEE UNA CUENTA DEL TIPO " + product.getName().toUpperCase() + " ::: TIPO DE CUENTA" + client.getCustomerType().getName());
+				throw new RuntimeException("CLIENTE YA POSEE UNA CUENTA DEL TIPO " + product.getName().toUpperCase() + " ::: TIPO DE CUENTA" + client.getCustomerType().getName()); //CREDIT
+				//return  null;
+			} else if (contract.stream().count() >= 1 && client.getCustomerType().getName().equals("EMPRESARIAL") && product.getProductType().getName().equals("Bank account") && !(product.getName().equals("Cuenta corriente"))) {
+				logger.info("CLIENTE NO PUEDO TENER CUENTA DEL TIPO " + product.getName().toUpperCase() + " ::: TIPO DE CUENTA " + client.getCustomerType().getName());
+				throw new BadRequestException("CLIENTE NO PUEDO TENER CUENTA DEL TIPO " + product.getName().toUpperCase() + " ::: TIPO DE CUENTA " + client.getCustomerType().getName());
+				//return  null;
+			} else if (product.getProductType().getName().equals("PERSONAL VIP") || product.getProductType().getName().equals("EMPRESARIAL PYME")) {
 				//proyecto 2  Bank account
-				List<CustomerProduct> contracts= this.findByCustomersIdAndProductId(obj.getCustomerId(),obj.getProductId()).stream().filter(cs->cs.getProduct().getProductType().getName().equals("Bank account")).toList();
-				if (contracts.stream().count()==0){
-					logger.info("CLIENTE DEBE POSEER UN CRÉDITO. => "+product.getName().toUpperCase()+" ::: " + client.getCustomerType().getName());
-					//throw new RuntimeException("CLIENTE DEBE POSEER UN CRÉDITO. => "+product.getName().toUpperCase()+" ::: " + client.getCustomerType().getName());
-					return  null;
+				List<CustomerProduct> contracts = this.findByCustomersIdAndProductId(obj.getCustomerId(), obj.getProductId()).stream().filter(cs -> cs.getProduct().getProductType().getName().equals("Bank account")).toList();
+				if (contracts.stream().count() == 0) {
+					logger.info("CLIENTE DEBE POSEER SOLO UN CRÉDITO. => " + product.getName().toUpperCase() + " ::: " + client.getCustomerType().getName());
+					throw new BadRequestException("CLIENTE DEBE POSEER UN CRÉDITO. => " + product.getName().toUpperCase() + " ::: " + client.getCustomerType().getName());
+					//return  null;
 				}
 			}
 			obj.setCustomers(client);
@@ -154,22 +181,23 @@ public class CustomerProductServiceImpl implements ICustomerProductService {
 			obj.setNumberOfMoves(BigDecimal.valueOf(0));
 			obj = repo2.save(obj);
 			logger.info("SE INSERTÓ EL CONTRATO ::: " + obj.getId());
-
-			return obj;
 		}catch (Exception e){
+			logger.info("ERRO ::: "+e.getMessage());
 			throw new BadRequestException("Error: "+e.getMessage());
 		}
+			return obj;
 
 	}
 
 	@Override
 	public Mono<CustomerProduct> update(CustomerProduct obj) {
+		logger.info("Class: CustomerProductServiceImpl -> Method: update "+obj.toString());
 
 		if (obj.getId() == null || obj.getId().isEmpty())
 			return Mono.error(() -> new BadRequestException("El campo id es requerido."));
 		
 		return repo.findById(obj.getId())
-				.switchIfEmpty(Mono.error(() -> new ModelNotFoundException("CONTRATO NO ENCONTRADO")))
+				.switchIfEmpty(Mono.error(() -> new BadRequestException("CONTRATO NO ENCONTRADO")))
 				.flatMap(c -> {
 					return this.findByIdCustomer(obj.getCustomerId())
 							.switchIfEmpty(Mono.error(() -> new BadRequestException("El campo customerId tiene un valor no válido.")))
@@ -205,6 +233,7 @@ public class CustomerProductServiceImpl implements ICustomerProductService {
 				});
 	}
 
+	@CircuitBreaker(name="contrato", fallbackMethod = "fallBackfindById")
 	@Override
 	public Mono<CustomerProduct> findById(String id) {
 
@@ -222,6 +251,9 @@ public class CustomerProductServiceImpl implements ICustomerProductService {
 							});
 				})
 				.doOnNext(c -> logger.info("SE ENCONTRÓ EL CONTRATO ::: " + id));
+	}
+	public Mono<String> fallBackfindById(String id, RuntimeException runtimeException){
+		return Mono.just("Microservicio no esta respondiendo");
 	}
 
 	@Override

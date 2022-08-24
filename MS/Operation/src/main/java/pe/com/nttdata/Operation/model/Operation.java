@@ -12,6 +12,7 @@ import javax.validation.constraints.Digits;
 import javax.validation.constraints.NotEmpty;
 import javax.validation.constraints.NotNull;
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
 @Builder
 @Data
@@ -36,4 +37,6 @@ public class Operation {
 	private String operationCustomerId;
 
 	private CustomerProduct customerProduct;
+	private String customerId;//quien realizó la operacion
+	private LocalDateTime registerDate;
 }
